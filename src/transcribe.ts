@@ -8,17 +8,36 @@ import {
 } from "obsidian";
 import { randomString } from "src/utils";
 
+export interface TranscriptionSegment {
+	id: number;
+	seek: number;
+	start: number;
+	end: number;
+	text: string;
+	tokens: number[];
+	temperature: number;
+	avg_logprob: number;
+	compression_ratio: number;
+	no_speech_prob: number;
+}
+
+export interface TranscriptionResult {
+	text: string;
+	segments: TranscriptionSegment[];
+	language: string;
+}
+
 // This class is the parent for transcription engines. It takes settings and a
 // file as an input and returns a transcription as a string
 export class TranscriptionEngine {
 	settings: TranscriptionSettings;
 	vault: Vault;
-	transcription_engine: (file: TFile) => Promise<string>;
+	transcription_engine: (file: TFile) => Promise<TranscriptionResult>;
 
 	constructor(
 		settings: TranscriptionSettings,
 		vault: Vault,
-		transcription_engine: (file: TFile) => Promise<string>
+		transcription_engine: (file: TFile) => Promise<TranscriptionResult>
 	) {
 		this.settings = settings;
 		this.vault = vault;
@@ -36,11 +55,13 @@ export class TranscriptionEngine {
 	 * @param {TFile} file
 	 * @returns {Promise<string>} promise that resolves to a string containing the transcription
 	 */
-	async getTranscription(file: TFile): Promise<string> {
+	async getTranscription(file: TFile): Promise<TranscriptionResult> {
 		return this.transcription_engine(file);
 	}
 
-	async getTranscriptionWhisperASR(file: TFile): Promise<string> {
+	async getTranscriptionWhisperASR(
+		file: TFile
+	): Promise<TranscriptionResult> {
 		// This next block is a workaround to current Obsidian API limitations:
 		// requestURL only supports string data or an unnamed blob, not
 		// key-value formdata
@@ -86,7 +107,7 @@ export class TranscriptionEngine {
 		// in the Boundary string
 		const options: RequestUrlParam = {
 			method: "POST",
-			url: `${this.settings.whisperASRUrl}/asr?task=transcribe&language=en`,
+			url: `${this.settings.whisperASRUrl}/asr?task=transcribe&language=en&output=json`,
 			contentType: `multipart/form-data; boundary=----${randomBoundaryString}`,
 			body: concatenated,
 		};
@@ -96,47 +117,7 @@ export class TranscriptionEngine {
 			.then(async (response) => {
 				this.debug(response.toString());
 
-				// WhisperASR returns a JSON object with a text field containing
-				// the transcription and segments field
-				if (this.settings.timestamps) {
-					let transcription = "";
-					const duration_seconds = Math.floor(
-						response.json.segments[
-							response.json.segments.length - 1
-						].end
-					);
-					let start_iso_slice = 14;
-					if (duration_seconds >= 3600) start_iso_slice = 11;
-					for (const s of response.json.segments) {
-						if (
-							typeof s.start === "number" &&
-							typeof s.text === "string"
-						) {
-							// Convert the start and end times to ISO 8601
-							// format and then substring to get the HH:MM:SS
-							// portion
-							const start = new Date(Math.floor(s.start) * 1000)
-								.toISOString()
-								.substring(start_iso_slice, 19);
-							const end = new Date(Math.floor(s.end) * 1000)
-								.toISOString()
-								.substring(start_iso_slice, 19);
-							const timestamp = `\`[${start} - ${end}]\``;
-
-							// Add the timestamp and the text to the
-							// transcription
-							transcription += timestamp + ": " + s.text + "\n";
-						} else {
-							console.error(
-								"WhisperASR returned an invalid segment"
-							);
-						}
-					}
-					return transcription;
-				} else {
-					const transcription: string = response.json.text;
-					return transcription;
-				}
+				return response.json;
 			})
 			.catch((error) => {
 				if (this.settings.debug) console.error(error);

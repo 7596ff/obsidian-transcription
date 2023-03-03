@@ -9,7 +9,7 @@ import {
 	TFile,
 	Notice,
 } from "obsidian";
-import { TranscriptionEngine } from "src/transcribe";
+import { TranscriptionEngine, TranscriptionSegment } from "src/transcribe";
 
 interface TranscriptionSettings {
 	timestamps: boolean;
@@ -114,7 +114,7 @@ export default class Transcription extends Plugin {
 					this.transcription_engine
 						.getTranscription(fileToTranscribe)
 						.then(async (transcription) => {
-							this.debug(transcription);
+							this.debug(transcription.toString());
 
 							let fileText = await this.app.vault.read(view.file);
 
@@ -141,16 +141,35 @@ export default class Transcription extends Plugin {
 								fileText.indexOf(fileLinkStringTagged) +
 								fileLinkStringTagged.length;
 
+							// instead of inserting the entire JSON response,
+							// insert newline-delineated segments of text
+							const segments = transcription.segments
+								.map((segment: TranscriptionSegment) =>
+									segment.text.trim()
+								)
+								.join("\n");
+
 							// fileText = [fileText.slice(0, startReplacementIndex), `\n\`\`\`${transcription}\`\`\``, fileText.slice(startReplacementIndex)].join('');
 							fileText = [
 								fileText.slice(0, startReplacementIndex),
-								`\n${transcription}`,
+								`\n${segments}`,
 								fileText.slice(startReplacementIndex),
 							].join("");
 
 							// Now that we have the file lines with the
 							// transcription, we can write the file
 							await this.app.vault.modify(view.file, fileText);
+
+							// also output the result next to the file as json
+							const encoder = new TextEncoder();
+							const fileLinkStringJson = `${fileLinkString
+								.split(".")
+								.pop()}.json`;
+
+							await this.app.vault.createBinary(
+								`${fileToTranscribe.parent.path}/${fileLinkStringJson}`,
+								encoder.encode(JSON.stringify(transcription))
+							);
 						})
 						.catch((error) => {
 							if (this.settings.debug)
